@@ -887,7 +887,9 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     rmSync(join(target, "dist"), { recursive: true, force: true });
     mkdirSync(target, { recursive: true });
     cpSync(c.dist, join(target, "dist"), { recursive: true });
+    // The skill too: a reference file dropped by a newer build must not linger and be re-synced.
     const skill = join(c.pkgRoot, "skill");
+    rmSync(join(target, "skill"), { recursive: true, force: true });
     if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
     const pkgJson = join(c.pkgRoot, "package.json");
     if (existsSync(pkgJson)) copyFileSync(pkgJson, join(target, "package.json"));
