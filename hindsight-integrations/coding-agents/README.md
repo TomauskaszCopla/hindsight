@@ -1137,9 +1137,11 @@ docker run -d -p 8888:8888 -p 9999:9999 -e HINDSIGHT_API_LLM_PROVIDER=gemini \
 
 ## Companion skill (generated)
 
-Every skills-capable host gets `skill/SKILL.md`, which teaches the agent what this integration does
-and how to configure it. **It is generated — do not edit it.** This file is the single source: the
-regions between `<!-- skill:begin -->` and `<!-- skill:end -->` are copied into the skill (a region
+Every skills-capable host gets the `skill/` directory: a short `SKILL.md`, which teaches the agent
+what this integration does and indexes the details, plus `skill/references/*.md`, which the agent
+reads only when a task needs them. **They are generated — do not edit them.** This file is the
+single source: the regions between `<!-- skill:begin -->` and `<!-- skill:end -->` become reference
+files, and a region over 1,500 words is split at its subsections (a region
 that starts mid-section names itself with `title="…"`, and heading levels are normalised so a marked
 `###` becomes the skill's `##`). Only the agent-facing half — which tools to call, crediting memory,
 correcting a wrong memory — lives outside it, in `skill-src/preamble.md`.
