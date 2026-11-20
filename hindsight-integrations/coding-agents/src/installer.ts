@@ -47,6 +47,7 @@ import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daem
 import { readLegacyEndpoint } from "./core/legacy";
 import { hookNode, hookNodeShell, isOurMcpEntry, nodeBinary } from "./core/util";
 import { SKILL_DIRS, resolveSkillDirs, traecodeDotDirName } from "./core/skill-dirs";
+import { replaceSkillDir } from "./core/skill-sync";
 import {
   enableWorkspaceMcpSetting,
   gateStateFileFor,
@@ -314,7 +315,8 @@ function skillsBaseFor(c: InstallCtx, harness: string): string {
   return join(c.home, ...parts);
 }
 
-/** Copy the packaged companion SKILL into a host's skills directory (idempotent overwrite).
+/** Copy the packaged companion skill directory (SKILL.md + references/) into a host's skills
+ * directory, replacing any earlier copy so a reference file a newer package dropped goes too.
  * The log line carries the harness prefix like every adapter message: several adapters install
  * the skill before their first own log, and an unprefixed line would render under the PREVIOUS
  * harness's group in the CLI output. */
@@ -324,7 +326,7 @@ function installSkill(c: InstallCtx, harness: string): void {
   const skillsBase = skillsBaseFor(c, harness);
   const dst = join(skillsBase, "hindsight-coding-agent");
   mkdirSync(skillsBase, { recursive: true });
-  cpSync(src, dst, { recursive: true });
+  replaceSkillDir(src, dst);
   c.log?.(`${harness}: skill installed at ${dst}`);
 }
 

@@ -53,6 +53,44 @@ describe("syncCompanionSkill", () => {
     ).toBe("NEW CONTENT v2");
   });
 
+  describe("with reference files", () => {
+    const installedDir = (home: string) =>
+      join(home, ".claude", "skills", "hindsight-coding-agent");
+    const setupWithRefs = (installedRefs: Record<string, string>) => {
+      const { home, src } = setup("NEW CONTENT v2");
+      mkdirSync(join(src, "references"));
+      writeFileSync(join(src, "references", "config.md"), "config v2");
+      const refs = join(installedDir(home), "references");
+      mkdirSync(refs);
+      for (const [name, body] of Object.entries(installedRefs))
+        writeFileSync(join(refs, name), body);
+      return { home, src };
+    };
+
+    it("re-copies when only a reference file changed", () => {
+      const { home, src } = setupWithRefs({ "config.md": "config v1" });
+      syncCompanionSkill("claude-code", { home, srcDir: src });
+      expect(readFileSync(join(installedDir(home), "references", "config.md"), "utf8")).toBe(
+        "config v2"
+      );
+    });
+
+    it("adds a reference file the installed copy lacks", () => {
+      const { home, src } = setupWithRefs({});
+      syncCompanionSkill("claude-code", { home, srcDir: src });
+      expect(existsSync(join(installedDir(home), "references", "config.md"))).toBe(true);
+    });
+
+    it("removes a reference file the package no longer ships", () => {
+      const { home, src } = setupWithRefs({ "config.md": "config v2", "old.md": "dropped" });
+      syncCompanionSkill("claude-code", { home, srcDir: src });
+      expect(existsSync(join(installedDir(home), "references", "old.md"))).toBe(false);
+      expect(readFileSync(join(installedDir(home), "references", "config.md"), "utf8")).toBe(
+        "config v2"
+      );
+    });
+  });
+
   it("no-ops on identical content and on hosts without a skills mechanism", () => {
     const { home, src } = setup("NEW CONTENT v2");
     syncCompanionSkill("claude-code", { home, srcDir: src }); // same content — no throw, unchanged

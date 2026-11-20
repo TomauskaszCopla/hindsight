@@ -9,12 +9,20 @@
  *     the docs a user actually reads never named them.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-// @ts-expect-error — plain .mjs build script, no type declarations
-import { regions } from "../scripts/build-skill.mjs";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  build,
+  diffSkill,
+  referenceFiles,
+  regions,
+  SPLIT_WORDS,
+  writeSkill,
+  // @ts-expect-error — plain .mjs build script, no type declarations
+} from "../scripts/build-skill.mjs";
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readme = () => readFileSync(join(pkgRoot, "README.md"), "utf8");
@@ -29,11 +37,29 @@ describe("companion skill", () => {
   });
 
   it("carries the configuration reference, not a subset of it", () => {
-    const skill = readFileSync(join(pkgRoot, "skill", "SKILL.md"), "utf8");
+    // SKILL.md is only the index; the configuration lives in the reference files it links.
+    const dir = join(pkgRoot, "skill");
+    const skill = [
+      readFileSync(join(dir, "SKILL.md"), "utf8"),
+      ...readdirSync(join(dir, "references")).map((f) =>
+        readFileSync(join(dir, "references", f), "utf8")
+      ),
+    ].join("\n");
     // The keys that fix the failure mode #3735 reported: a bank shared across unrelated projects.
     for (const key of ["bankIdTemplate", "dynamicBankId", "mapPathToBank", "disabled", "bank"]) {
       expect(skill).toContain(`\`${key}\``);
     }
+  });
+
+  it("links every reference file from SKILL.md, by a path relative to the skill", () => {
+    const dir = join(pkgRoot, "skill");
+    const md = readFileSync(join(dir, "SKILL.md"), "utf8");
+    const linked = [...md.matchAll(/\]\((references\/[^)]+\.md)\)/g)].map((m) => m[1]);
+    expect(linked.sort()).toEqual(
+      readdirSync(join(dir, "references"))
+        .map((f) => `references/${f}`)
+        .sort()
+    );
   });
 });
 
@@ -133,5 +159,140 @@ describe("skill region extraction", () => {
 
   it("refuses a README with no marked regions at all", () => {
     expect(() => extract("## Configuration\n\nno markers here")).toThrow(/no <!-- skill:begin -->/);
+  });
+});
+
+describe("skill reference files", () => {
+  const readme = (...parts: string[]) => parts.join("\n");
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
+  const slugs = (src: string) => (referenceFiles(src) as { slug: string }[]).map((f) => f.slug);
+
+  it("maps each region to one file, named from its title= or first heading", () => {
+    const src = readme(
+      '<!-- skill:begin title="Install / update" -->',
+      "run it",
+      "<!-- skill:end -->",
+      "<!-- skill:begin -->",
+      "## Diagnostics & logging",
+      "### Is the memory ready yet?",
+      "text",
+      "<!-- skill:end -->"
+    );
+    expect(slugs(src)).toEqual(["install-update", "diagnostics-logging"]);
+  });
+
+  it("splits a region over SPLIT_WORDS at its subsections, re-normalising each to ##", () => {
+    const src = readme(
+      "<!-- skill:begin -->",
+      "### Configuration", // a README ### — normalised to ## first
+      "lead-in",
+      "#### When a change takes effect",
+      filler(SPLIT_WORDS),
+      "#### Per-source `per_source`",
+      "##### Recipe",
+      "```bash",
+      "### not a heading inside a fence",
+      "```",
+      "<!-- skill:end -->"
+    );
+    const files = referenceFiles(src) as { slug: string; body: string }[];
+    expect(files.map((f) => f.slug)).toEqual([
+      "configuration",
+      "configuration-when-a-change-takes-effect",
+      "configuration-per-source-per-source",
+    ]);
+    expect(files[0].body).toBe("## Configuration\nlead-in");
+    expect(files[2].body).toMatch(/^## Per-source `per_source`\n### Recipe\n/);
+    expect(files[2].body).toContain("\n### not a heading inside a fence\n");
+  });
+
+  it("keeps a region at or under SPLIT_WORDS whole", () => {
+    const src = readme(
+      "<!-- skill:begin -->",
+      "## A",
+      "### B",
+      "text",
+      "### C",
+      "<!-- skill:end -->"
+    );
+    expect(slugs(src)).toEqual(["a"]);
+  });
+
+  it("points a README #anchor at the reference file that now holds the section", () => {
+    const src = readme(
+      "<!-- skill:begin -->",
+      "## Config",
+      "see [Opt-in](#opt-in-only) and [Elsewhere](#not-in-skill)",
+      "### Opt-in only",
+      filler(SPLIT_WORDS),
+      "<!-- skill:end -->"
+    );
+    const [lead] = referenceFiles(src) as { body: string }[];
+    expect(lead.body).toContain("[Opt-in](config-opt-in-only.md#opt-in-only)");
+    expect(lead.body).toContain("[Elsewhere](#not-in-skill)");
+  });
+
+  it("refuses two parts that would share a file name", () => {
+    const src = readme(
+      '<!-- skill:begin title="Setup" -->',
+      "a",
+      "<!-- skill:end -->",
+      '<!-- skill:begin title="Setup" -->',
+      "b",
+      "<!-- skill:end -->"
+    );
+    expect(() => referenceFiles(src)).toThrow(/two skill reference files would be named setup\.md/);
+  });
+
+  it("indexes every reference in SKILL.md and marks every file as generated", () => {
+    const files = build({
+      readme: readme('<!-- skill:begin title="Install" -->', "run it", "<!-- skill:end -->"),
+      preamble: "---\nname: x\ndescription: y\n---\n\n# X\n",
+    }) as Map<string, string>;
+    expect([...files.keys()]).toEqual(["SKILL.md", "references/install.md"]);
+    expect(files.get("SKILL.md")).toContain("[`references/install.md`](references/install.md)");
+    expect(files.get("SKILL.md")).toMatch(/relative to this skill's directory/);
+    for (const content of files.values()) expect(content).toContain("<!-- GENERATED from");
+  });
+
+  describe("check and write", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+      for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+    });
+    const files = new Map([
+      ["SKILL.md", "index\n"],
+      ["references/a.md", "a\n"],
+    ]);
+    const written = () => {
+      const dir = mkdtempSync(join(tmpdir(), "skill-build-"));
+      dirs.push(dir);
+      writeSkill(dir, files);
+      return dir;
+    };
+
+    it("passes on a fresh build", () => {
+      expect(diffSkill(written(), files)).toEqual([]);
+    });
+
+    it("fails on a changed, a missing and a stale reference file", () => {
+      const dir = written();
+      writeFileSync(join(dir, "references", "a.md"), "edited\n");
+      writeFileSync(join(dir, "references", "old.md"), "from a previous build\n");
+      rmSync(join(dir, "SKILL.md"));
+      expect(diffSkill(dir, files)).toEqual([
+        "missing: SKILL.md",
+        "out of date: references/a.md",
+        "stale: references/old.md",
+      ]);
+    });
+
+    it("write mode deletes stale reference files", () => {
+      const dir = written();
+      writeFileSync(join(dir, "references", "old.md"), "from a previous build\n");
+      expect(writeSkill(dir, files)).toEqual(["references/old.md"]);
+      expect(existsSync(join(dir, "references", "old.md"))).toBe(false);
+      expect(diffSkill(dir, files)).toEqual([]);
+    });
   });
 });
