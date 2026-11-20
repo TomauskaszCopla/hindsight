@@ -15,6 +15,11 @@
  *
  *     <!-- skill:begin -->                          … <!-- skill:end -->
  *     <!-- skill:begin title="Install / update" --> … <!-- skill:end -->
+ *     <!-- skill:begin when="installing or upgrading the plugin" --> … <!-- skill:end -->
+ *
+ * `when=` is the loading condition the SKILL.md index shows for the region ("read when …"), so the
+ * agent can pick a reference file by task instead of by heading. Without it the index falls back to
+ * the region's title.
  *
  * The skill-only half — what the agent does with the memory (tools, crediting, corrections) — has
  * no place in an npm README, so it stays in skill-src/preamble.md, which carries the frontmatter.
@@ -48,7 +53,9 @@ const readmePath = join(pkgRoot, "README.md");
 const preamblePath = join(pkgRoot, "skill-src", "preamble.md");
 const skillDir = join(pkgRoot, "skill");
 
-const BEGIN = /^<!--\s*skill:begin(?:\s+title="([^"]*)")?\s*-->$/;
+const BEGIN = /^<!--\s*skill:begin((?:\s+[a-z]+="[^"]*")*)\s*-->$/;
+const ATTRIBUTE = /([a-z]+)="([^"]*)"/g;
+const ATTRIBUTES = new Set(["title", "when"]);
 const END = /^<!--\s*skill:end\s*-->$/;
 const HEADING = /^(#{1,6})(\s+)(.*)$/;
 const FENCE = /^\s*(```|~~~)/;
@@ -107,6 +114,15 @@ function normalise(body) {
   });
 }
 
+function attributesOf(text) {
+  const attributes = {};
+  for (const [, name, value] of text.matchAll(ATTRIBUTE)) {
+    if (!ATTRIBUTES.has(name)) throw new Error(`unknown <!-- skill:begin --> attribute ${name}=`);
+    attributes[name] = value;
+  }
+  return attributes;
+}
+
 function parseRegions(src) {
   const out = [];
   let current = null;
@@ -114,7 +130,7 @@ function parseRegions(src) {
     const begin = BEGIN.exec(line);
     if (begin) {
       if (current) throw new Error("nested <!-- skill:begin -->");
-      current = { title: begin[1], lines: [] };
+      current = { ...attributesOf(begin[1]), lines: [] };
       continue;
     }
     if (END.test(line)) {
@@ -165,27 +181,28 @@ const titleOf = (body) => headingsOf(body)[0].text;
  */
 export function referenceFiles(src) {
   const files = [];
-  for (const region of parseRegions(src)) {
+  parseRegions(src).forEach((region, id) => {
     const body = render(region);
     const title = region.title ?? titleOf(body);
     const slug = slugify(title);
+    const group = { id, title, when: region.when };
     const subsections = headingsOf(body).filter((h) => h.level === 3);
     if (words(body) <= SPLIT_WORDS || !subsections.length) {
-      files.push({ slug, trail: [title], body });
-      continue;
+      files.push({ slug, group, trail: [title], body });
+      return;
     }
     const lines = body.split("\n");
     const lead = lines.slice(0, subsections[0].index).join("\n").trim();
     // A lead-in that is only the heading carries nothing worth a file.
     if (lead.split("\n").length > 1) {
-      files.push({ slug, trail: [title], body: lead });
+      files.push({ slug, group, trail: [title], body: lead });
     }
     subsections.forEach((h, i) => {
       const end = i + 1 < subsections.length ? subsections[i + 1].index : lines.length;
       const part = normalise(lines.slice(h.index, end).join("\n").trim());
-      files.push({ slug: `${slug}-${slugify(h.text)}`, trail: [title, h.text], body: part });
+      files.push({ slug: `${slug}-${slugify(h.text)}`, group, trail: [title, h.text], body: part });
     });
-  }
+  });
   const seen = new Set();
   for (const f of files) {
     if (seen.has(f.slug)) throw new Error(`two skill reference files would be named ${f.slug}.md`);
@@ -225,14 +242,48 @@ function relinkAnchors(files) {
 
 const tidy = (text) => `${text.replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
 
-/** The "read when …" index line for one reference file, built from its headings. */
-function indexLine({ slug, trail, body }) {
-  const path = `${REFERENCES}/${slug}.md`;
-  const subs = headingsOf(body)
+const pathOf = (ref) => `${REFERENCES}/${ref.slug}.md`;
+const linkOf = (ref) => `[\`${pathOf(ref)}\`](${pathOf(ref)})`;
+
+/** A file's own `###` subsection titles, so the index shows what it holds. */
+const sectionsOf = ({ body }) =>
+  headingsOf(body)
     .filter((h) => h.level === 3)
-    .map((h) => h.text);
-  const covers = subs.length ? `: ${subs.join(" · ")}` : "";
-  return `- [\`${path}\`](${path}) — read when you need **${trail.join(" › ")}**${covers}.`;
+    .map((h) => h.text)
+    .join(" · ");
+
+/**
+ * One index entry per README region: its loading condition, then its file, or, for a split
+ * region, its lead-in file and one nested line per part.
+ */
+function indexEntry({ title, when, files }) {
+  const condition = when ? `read when ${when}` : `read when you need **${title}**`;
+  if (files.length === 1) {
+    const sections = sectionsOf(files[0]);
+    return `- **${title}** (${linkOf(files[0])}): ${condition}.${sections ? ` Sections: ${sections}.` : ""}`;
+  }
+  const [first, ...rest] = files;
+  const hasLead = first.trail.length === 1;
+  const parts = hasLead ? rest : files;
+  const start = hasLead ? ` Start with ${linkOf(first)}, then read` : " Read";
+  return [
+    `- **${title}**: ${condition}.${start} only the part the task needs:`,
+    ...parts.map((p) => {
+      const sections = sectionsOf(p);
+      return `  - [${p.trail.at(-1)}](${pathOf(p)})${sections ? ` (includes ${sections})` : ""}`;
+    }),
+  ].join("\n");
+}
+
+/** Reference files grouped back into their README regions, in order. */
+function indexEntries(refs) {
+  const groups = [];
+  for (const ref of refs) {
+    const last = groups.at(-1);
+    if (last && last.id === ref.group.id) last.files.push(ref);
+    else groups.push({ ...ref.group, files: [ref] });
+  }
+  return groups.map(indexEntry);
 }
 
 /**
@@ -251,10 +302,10 @@ export function build({
   const index = [
     "## Reference",
     "",
-    "Configuration, install and diagnostics details live in separate files. Paths are relative to " +
-      "this skill's directory (the one holding this SKILL.md). Read only the file the task needs.",
+    "Install, configuration and diagnostics detail lives in separate files. Paths are relative to " +
+      "the directory that holds this SKILL.md. Read only the file the task needs.",
     "",
-    ...refs.map(indexLine),
+    ...indexEntries(refs),
   ].join("\n");
   const files = new Map();
   files.set(

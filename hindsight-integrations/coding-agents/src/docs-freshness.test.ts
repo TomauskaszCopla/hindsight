@@ -251,8 +251,39 @@ describe("skill reference files", () => {
     }) as Map<string, string>;
     expect([...files.keys()]).toEqual(["SKILL.md", "references/install.md"]);
     expect(files.get("SKILL.md")).toContain("[`references/install.md`](references/install.md)");
-    expect(files.get("SKILL.md")).toMatch(/relative to this skill's directory/);
+    expect(files.get("SKILL.md")).toMatch(/relative to the directory that holds this SKILL\.md/);
     for (const content of files.values()) expect(content).toContain("<!-- GENERATED from");
+  });
+
+  it("shows a region's when= as its loading condition and nests a split region's parts", () => {
+    const skill = build({
+      readme: readme(
+        '<!-- skill:begin title="Install" when="installing the plugin" -->',
+        "run it",
+        "<!-- skill:end -->",
+        '<!-- skill:begin when="changing a setting" -->',
+        "## Configuration",
+        "lead-in",
+        "### Opt-in only",
+        filler(SPLIT_WORDS),
+        "<!-- skill:end -->"
+      ),
+      preamble: "---\nname: x\ndescription: y\n---\n\n# X\n",
+    }).get("SKILL.md") as string;
+    expect(skill).toContain(
+      "- **Install** ([`references/install.md`](references/install.md)): read when installing the plugin."
+    );
+    expect(skill).toContain(
+      "- **Configuration**: read when changing a setting. Start with " +
+        "[`references/configuration.md`](references/configuration.md), then read only the part the task needs:\n" +
+        "  - [Opt-in only](references/configuration-opt-in-only.md)"
+    );
+  });
+
+  it("refuses an unknown skill:begin attribute rather than ignoring a typo", () => {
+    expect(() =>
+      referenceFiles(readme('<!-- skill:begin title="A" wehn="x" -->', "a", "<!-- skill:end -->"))
+    ).toThrow(/unknown <!-- skill:begin --> attribute wehn=/);
   });
 
   describe("check and write", () => {

@@ -50,7 +50,7 @@ with it.
 
 ## Install
 
-<!-- skill:begin title="Install / update" -->
+<!-- skill:begin title="Install / update" when="installing, updating or uninstalling the plugin, or pinning its version" -->
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install all          # every detected agent, wired natively
@@ -537,7 +537,7 @@ Nothing to sign up for and nothing to host — memory runs on your machine. The 
   otherwise the first of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`;
   otherwise the Claude Code CLI, which needs no key. `install` tells you which it found.
 
-<!-- skill:begin title="Local daemon settings (daemon mode)" -->
+<!-- skill:begin title="Local daemon settings (daemon mode)" when="the memory server runs as a local daemon (`serverMode: daemon`)" -->
 
 Daemon settings keep the names the old per-agent Claude Code plugin used, so an existing
 environment carries over unchanged:
@@ -556,7 +556,7 @@ no equivalent here.
 
 <!-- skill:end -->
 
-<!-- skill:begin -->
+<!-- skill:begin when="changing a setting, opting a repo or directory in or out, choosing which bank a repo uses, or customizing pages" -->
 
 ## Configuration
 
@@ -1139,10 +1139,11 @@ Every skills-capable host gets the `skill/` directory: a short `SKILL.md`, which
 what this integration does and indexes the details, plus `skill/references/*.md`, which the agent
 reads only when a task needs them. **They are generated — do not edit them.** This file is the
 single source: the regions between `<!-- skill:begin -->` and `<!-- skill:end -->` become reference
-files, and a region over 1,500 words is split at its subsections (a region
-that starts mid-section names itself with `title="…"`, and heading levels are normalised so a marked
-`###` becomes the skill's `##`). Only the agent-facing half — which tools to call, crediting memory,
-correcting a wrong memory — lives outside it, in `skill-src/preamble.md`.
+files, and a region over 1,500 words is split at its subsections. A region's `when="…"` is its
+loading condition in the skill's index. A region that starts mid-section names itself with
+`title="…"`, and heading levels are normalised so a marked `###` becomes the skill's `##`.
+Only the agent-facing half — which tools to call, crediting memory, correcting a wrong memory —
+lives outside it, in `skill-src/preamble.md`.
 
 ```bash
 npm run skill:build   # after editing this README or the preamble
@@ -1154,7 +1155,7 @@ the skill and the README each documented a different subset of the same settings
 is generated from this file too (`node hindsight-docs/scripts/sync-coding-agents-doc.mjs`), which
 drops the markers along with the contributor-only sections.
 
-<!-- skill:begin -->
+<!-- skill:begin when="memory is missing, not ready, stale or wrong, or the user wants logs or a memory reset" -->
 
 ## Diagnostics & logging
 
