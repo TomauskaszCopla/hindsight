@@ -1,8 +1,9 @@
 /**
  * Companion-skill self-update: `npm update -g` refreshes the PACKAGE's skill/, but the copies the
  * installer placed in each host's skills directory would go stale. Every session start compares
- * the installed copy against the packaged one and re-copies on drift — so upgrading the plugin
- * upgrades the skill, no re-install needed.
+ * the installed directory against the packaged one — every file, since SKILL.md links on-demand
+ * `references/*.md` — and on drift replaces it whole, so a reference file the package dropped is
+ * removed too. Upgrading the plugin upgrades the skill, no re-install needed.
  *
  * Presence-gated BY DEFAULT: a host where the skill was never installed (or was uninstalled) is
  * left alone, because for a hook harness the hook registration and the skill are installed by the
@@ -15,7 +16,7 @@
  * LOADED is the installation signal: uninstalling removes the entry that loads us, so a running
  * plugin can only mean the host still wants us.
  */
-import { cpSync, existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,33 @@ function packagedSkillDir(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const dist = join(here, "..", "skill");
   return existsSync(join(dist, "SKILL.md")) ? dist : join(here, "..", "..", "skill");
+}
+
+/** Every file under `dir`, as sorted paths relative to it. */
+function listFiles(dir: string, sub = ""): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(join(dir, sub), { withFileTypes: true })) {
+    const rel = sub ? join(sub, e.name) : e.name;
+    if (e.isDirectory()) out.push(...listFiles(dir, rel));
+    else if (e.isFile()) out.push(rel);
+  }
+  return out.sort();
+}
+
+/** True when `dst` holds exactly the files of `src` with the same content. The skill is SKILL.md
+ *  plus on-demand `references/*.md`, so comparing SKILL.md alone would miss a changed, added or
+ *  removed reference file. */
+function sameTree(src: string, dst: string): boolean {
+  const files = listFiles(src);
+  const installed = listFiles(dst);
+  if (files.length !== installed.length || files.some((f, i) => f !== installed[i])) return false;
+  return files.every((f) => readFileSync(join(src, f)).equals(readFileSync(join(dst, f))));
+}
+
+/** Replace `dst` with a copy of `src`: removed first, so a file the package dropped goes too. */
+export function replaceSkillDir(src: string, dst: string): void {
+  rmSync(dst, { recursive: true, force: true });
+  cpSync(src, dst, { recursive: true }); // recursive cpSync creates the skills root too
 }
 
 export function syncCompanionSkill(
@@ -44,9 +72,7 @@ export function syncCompanionSkill(
     const dstMd = join(dst, "SKILL.md");
     const installed = existsSync(dstMd);
     if (!installed && !opts.install) return; // never installed here — not ours to decide
-    if (!installed || readFileSync(srcMd, "utf8") !== readFileSync(dstMd, "utf8")) {
-      cpSync(src, dst, { recursive: true }); // recursive cpSync creates the skills root too
-    }
+    if (!installed || !sameTree(src, dst)) replaceSkillDir(src, dst);
   } catch {
     /* best-effort — skill freshness must never break a session */
   }
